@@ -8,14 +8,11 @@
 # This is a simple example for a custom action which utters "Hello World!"
 
 from typing import Any, Text, Dict, List
-from dotenv import load_dotenv
 from os import getenv
 from rasa_sdk import Action, Tracker
 from rasa_sdk.executor import CollectingDispatcher
 
 from pymongo import MongoClient
-
-load_dotenv()
 
 MONGO_URI = getenv('MONGODB_URI')
 

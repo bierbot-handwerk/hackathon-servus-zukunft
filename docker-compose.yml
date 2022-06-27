@@ -1,28 +1,155 @@
 version: "3.7"
 services:
-  bierbot-mongo:
+  rvproxy:
+      image: traefik:v2.4
+      restart: always
+      container_name: rvproxy
+      command:
+        - "--api.insecure=true"
+        - "--api.dashboard=true"
+        - "--providers.docker"
+        - "--providers.docker.exposedbydefault=false"
+        - "--entrypoints.http.address=:3000"
+        - "--entrypoints.https.address=:443"
+        - "--certificatesresolvers.le.acme.email=sslcertificates@codepals.org"
+        - "--certificatesresolvers.le.acme.storage=/certificates/acme.json"
+        - "--certificatesresolvers.le.acme.tlschallenge=true"
+        - "--log.level=WARNING"
+        # - "--accesslog"
+        # - "--log"
+        # - "--api"
+      ports:
+        - 80:3000
+        - 443:443
+      labels:
+        - "traefik.enable=true"
+        # HTTP Route
+        - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
+        - "traefik.http.routers.dashboard.entrypoints=http"
+        - "traefik.http.routers.dashboard.rule=Host(`dashboard.chatbot.localhost`)"
+        # HTTPS Route
+        - "traefik.http.routers.dashboard-https.entrypoints=https"
+        - "traefik.http.routers.dashboard-https.rule=Host(`dashboard.chatbot.localhost`)"
+        - "traefik.http.routers.dashboard-https.tls=true"
+        # Resolver settings
+        - "traefik.http.routers.dashboard-https.tls.certresolver=le"
+        - "traefik.http.routers.dashboard-https.service=api@internal"
+        # Middleware for fowarding created
+        - "traefik.http.middlewares.https-redirect.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.https-redirect.redirectscheme.permanent=true"
+        # global redirect to https
+        - "traefik.http.routers.redirect-all-http.rule=hostregexp(`{host:.+}`)"
+        - "traefik.http.routers.redirect-all-http.entrypoints=http"
+        - "traefik.http.routers.redirect-all-http.middlewares=https-redirect"
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - chatbot-project-public-certificates:/certificates
+
+  bierbot-mongo: # Database to store sensor data & conversations
     image: mongo
     restart: always
     container_name: bierbot-mongo
-    ports:
-      - "27017:27017"
+    expose:
+      - 27017
     environment: 
       MONGO_INITDB_ROOT_USERNAME: bierbot
       MONGO_INITDB_ROOT_PASSWORD: bierbot
     volumes:
       - bierbotdb:/data/db
         
-  bierbot-mongo-express:
+  bierbot-mongo-express: # An admin gui to explore the database
     image: mongo-express
     container_name: mongo-express
     restart: always
-    ports:
-      - "8081:8081"
+    expose:
+      - 8081
     environment:
       ME_CONFIG_MONGODB_SERVER: bierbot-mongo
       ME_CONFIG_MONGODB_ADMINUSERNAME: bierbot
       ME_CONFIG_MONGODB_ADMINPASSWORD: bierbot
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mongoex.rule=Host(`mongoex.localhost`)"
+      - "traefik.http.routers.mongoex.priority=1"
+      - "traefik.http.routers.mongoex.entrypoints=http"
+      # Domain settings
+      - "traefik.http.routers.mongoex-https.entrypoints=https"
+      - "traefik.http.routers.mongoex-https.rule=Host(`mongoex.localhost`)"
+      - "traefik.http.routers.mongoex-https.tls=true"
+      # Resolver settings / Let's encrypt
+      - "traefik.http.routers.mongoex-https.tls.certresolver=le"
 
+  webserver:
+    container_name: webserver
+    image: httpd:2.4
+    restart: always
+    expose:
+      - 80
+    volumes:
+      - ./landingpage:/usr/local/apache2/htdocs
+    # networks:
+    #   - chatbot-project-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ui.rule=Host(`chatbot.localhost`)"
+      - "traefik.http.routers.ui.priority=1"
+      - "traefik.http.routers.ui.entrypoints=http"
+      # Domain settings
+      - "traefik.http.routers.ui-https.entrypoints=https"
+      - "traefik.http.routers.ui-https.rule=Host(`chatbot.localhost`)"
+      - "traefik.http.routers.ui-https.tls=true"
+      # Resolver settings / Let's encrypt
+      - "traefik.http.routers.ui-https.tls.certresolver=le"
+
+  rasa-server: # The chatbot backend
+    container_name: rasa-server
+    image: rasa/rasa:3.2.0-full
+    # image: khalosa/rasa-aarch64 # works on M1 macs
+    volumes:
+      - ./chatbot/rasa_project:/app
+      # - models
+    environment:
+      CALLBACK_URL: 'https://api.chatbot.localhost/bot'
+      WEBHOOK_URL: 'https://api.chatbot.localhost/webhooks'
+      ACTION_ENDPOINT: 'http://rasa-actions:5055/webhook'
+      TELEGRAM_BOT_NAME: bierthronbot
+      MONGODB_SERVER: bierbot-mongo
+      MONGODB_DB_NAME: rasa
+      MONGODB_URI: mongodb+srv://bierbot:bierbot@bierbot-mongo:27017/rasa
+      MONGODB_ADMINUSERNAME: bierbot
+      MONGODB_ADMINPASSWORD: bierbot
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.apichatbot.rule=Host(`api.chatbot.localhost`)"
+      - "traefik.http.routers.apichatbot.priority=1"
+      - "traefik.http.routers.apichatbot.entrypoints=http"
+      # Domain settings
+      - "traefik.http.routers.apichatbot-https.entrypoints=https"
+      - "traefik.http.routers.apichatbot-https.rule=Host(`api.chatbot.localhost`)"
+      - "traefik.http.routers.apichatbot-https.tls=true"
+      # Resolver settings / Let's encrypt
+      - "traefik.http.routers.apichatbot-https.tls.certresolver=le"
+      # Middleware for CORS
+      - "traefik.http.middlewares.rasaheaders.headers.accesscontrolalloworiginlist=https://chatbot.localhost"
+      - "traefik.http.routers.apichatbot-https.middlewares=rasaheaders"
+    expose:
+      - 5005
+    command:
+      - run
+    working_dir: /app
+
+  rasa-actions: # The chatbot trained model
+    container_name: rasa-actions
+    image: bierbot-rasa-actions
+    build:
+      context: ./chatbot
+      dockerfile: Dockerfile
+    expose:
+      - 5055
+    entrypoint: ["/bin/sh", "-c"]
+    command: 
+      - python -m rasa_sdk --actions actions
 
 volumes:
-  bierbotdb:
+  bierbotdb: # mongodb persistence
+  chatbot-project-public-certificates: # Let's encrypt certificates

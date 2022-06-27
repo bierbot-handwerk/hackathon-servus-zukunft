@@ -2,6 +2,7 @@
 .env
 env
 .rasa
+.config
 models/
 __pycache__
 credentials.yml

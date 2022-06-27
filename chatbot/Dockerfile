@@ -5,7 +5,7 @@ FROM rasa/rasa-sdk
 WORKDIR /app
 
 # Copy any additional custom requirements, if necessary (uncomment next line)
-COPY actions/requirements-actions.txt ./
+COPY ./rasa_project/actions/requirements-actions.txt ./
 
 # Change back to root user to install dependencies
 USER root
@@ -14,7 +14,8 @@ USER root
 RUN pip install -r requirements-actions.txt
 
 # Copy actions folder to working directory
-COPY ./actions /app/actions
+COPY ./rasa_project/actions /app/actions
 
+# ENTRYPOINT [ "/bin/sh" ]
 # By best practices, don't run the code with root user
 #USER 1001
